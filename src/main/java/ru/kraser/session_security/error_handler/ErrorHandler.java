@@ -24,16 +24,4 @@ public class ErrorHandler {
                 .build();
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
     }
-
-    @ExceptionHandler(io.jsonwebtoken.JwtException.class)
-    @ResponseStatus(HttpStatus.UNAUTHORIZED)
-    public ResponseEntity<ApiResponse> handleJwtException(io.jsonwebtoken.JwtException exception) {
-        ApiResponse error = ApiResponse.builder()
-                .message("Invalid or expired token")
-                .status(HttpStatus.UNAUTHORIZED.value())
-                .httpStatus(HttpStatus.UNAUTHORIZED)
-                .timestamp(LocalDateTime.now().withNano(0))
-                .build();
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
-    }
 }

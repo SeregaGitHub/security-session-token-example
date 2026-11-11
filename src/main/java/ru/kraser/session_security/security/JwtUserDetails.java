@@ -16,8 +16,8 @@ public class JwtUserDetails implements UserDetails {
         this.user = user;
     }
 
-    public String getUserId() {
-        return user.getId();
+    public User getUser() {
+        return user;
     }
 
     @Override

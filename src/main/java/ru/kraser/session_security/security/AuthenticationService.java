@@ -1,31 +1,47 @@
 package ru.kraser.session_security.security;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.stereotype.Service;
 import ru.kraser.session_security.exception.AuthException;
-import ru.kraser.session_security.model.RefreshToken;
 import ru.kraser.session_security.model.User;
 import ru.kraser.session_security.security.dto.AuthenticationRequest;
 import ru.kraser.session_security.security.dto.AuthenticationResponse;
-import ru.kraser.session_security.service.UserService;
 
 @Service
 @RequiredArgsConstructor
 public class AuthenticationService {
 
-    private final UserService userService;
-    private final JwtService jwtService;
-    private final RefreshTokenService refreshTokenService;
+/*
+        Важно:
+
+-    securityContextRepository.saveContext(...) — обязательно в SS6,
+   иначе SecurityContextHolderFilter не восстановит контекст на следующем запросе.
+
+-    session.invalidate() — контейнер сам выставит Set-Cookie: JSESSIONID=; Max-Age=0.
+
+-    CsrfAuthenticationStrategy (Spring) сработает автоматически через AuthenticationSuccessEvent
+   после authenticationManager.authenticate(...) → ротирует CSRF-токен (защита от session fixation).
+*/
+
     private final AuthenticationManager authenticationManager;
+    private final SecurityContextRepository securityContextRepository;
 
-    public record AuthResult(AuthenticationResponse apiResponse, String refreshToken) {}
-
-    public AuthResult authenticate(AuthenticationRequest request) {
+    public AuthenticationResponse authenticate(AuthenticationRequest request,
+                                               HttpServletRequest httpRequest,
+                                               HttpServletResponse httpResponse) {
+        Authentication authentication;
         try {
-            authenticationManager.authenticate(
+            authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(
                             request.username(),
                             request.password()
@@ -35,51 +51,26 @@ public class AuthenticationService {
             throw new AuthException("Неверное имя пользователя или пароль !!!");
         }
 
-        // User user = authenticationClient.authenticate(request); // If UserService.class in another module
-        User user = userService.getUserByName(request.username());
-        JwtUserDetails userDetails = new JwtUserDetails(user);
+        // Сохраняем контекст в HttpSession
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(authentication);
+        SecurityContextHolder.setContext(context);
+        securityContextRepository.saveContext(context, httpRequest, httpResponse);
+        // ^ создаёт HttpSession, кладёт SPRING_SECURITY_CONTEXT, ставит Set-Cookie: JSESSIONID
 
-        String accessToken = jwtService.generateAccessToken(userDetails);
-        String refreshToken = jwtService.generateRefreshToken(userDetails);
-        refreshTokenService.saveRefreshToken(user.getUsername(), refreshToken);
+        User user = ((JwtUserDetails) authentication.getPrincipal()).getUser();
 
-        AuthenticationResponse apiResponse = AuthenticationResponse.builder()
-                .accessToken(accessToken)
+        return AuthenticationResponse.builder()
                 .username(user.getUsername())
                 .role(user.getRole())
                 .build();
-
-        return new AuthResult(apiResponse, refreshToken);
     }
 
-    public AuthResult refreshToken(String stringToken) {
-        //String stringToken = request.refreshToken();
-
-        if (!jwtService.isRefreshToken(stringToken)) {
-            throw new AuthException("Invalid token type");
+    public void logout(HttpServletRequest httpRequest) {
+        SecurityContextHolder.clearContext();
+        HttpSession session = httpRequest.getSession(false);
+        if (session != null) {
+            session.invalidate();   // контейнер удалит JSESSIONID cookie
         }
-
-        RefreshToken oldRefreshToken = refreshTokenService.verify(stringToken);
-
-        String username = oldRefreshToken.getUsername();
-        User user = userService.getUserByName(username);
-        if (user == null) throw new AuthException("User not found");
-        JwtUserDetails userDetails = new JwtUserDetails(user);
-
-        String newAccessToken = jwtService.generateAccessToken(userDetails);
-        String newRefreshToken = jwtService.generateRefreshToken(userDetails);
-        refreshTokenService.saveRefreshToken(username, newRefreshToken);
-
-        AuthenticationResponse response = AuthenticationResponse.builder()
-                .accessToken(newAccessToken)
-                .username(user.getUsername())
-                .role(user.getRole())
-                .build();
-
-        return new AuthResult(response, newRefreshToken);
-    }
-
-    public void logout(String stringRefreshToken) {
-        refreshTokenService.deleteByStringToken(stringRefreshToken);
     }
 }

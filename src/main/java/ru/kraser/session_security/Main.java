@@ -12,71 +12,6 @@ import ru.kraser.session_security.service.UserService;
 import java.util.List;
 
 /*
-@Modifying
-@Query("""
-    DELETE FROM RefreshToken rt
-    WHERE rt.revoked = true
-      AND rt.expiresAt < :threshold
-""")
-int deleteRevokedOlderThan(@Param("threshold") Instant threshold);
-
-@Scheduled(cron = "0 0 3 * * *")  // удаление каждую ночь в 03:00:00
-@Transactional
-public void cleanup() {
-    // Удаляем отозванные токены, истёкшие более 7 дней назад
-    Instant threshold = Instant.now().minus(7, ChronoUnit.DAYS);
-    int removed = repository.deleteRevokedOlderThan(threshold);
-    log.info("Cleaned up {} old revoked refresh tokens", removed);
-}
-
-Аннотация @Scheduled сама по себе ничего не делает, пока в приложении не включён механизм планировщика.
-Нужно добавить @EnableScheduling в любой @Configuration-класс (например, в Main или отдельный SchedulingConfig):
-
-@Configuration
-@EnableScheduling
-public class SchedulingConfig {
-}
-Или прямо в Main:
-
-@SpringBootApplication
-@EnableScheduling
-public class Main implements CommandLineRunner { ... }
-Без @EnableScheduling метод с @Scheduled просто никогда не будет вызван — Spring проигнорирует аннотацию.
- */
-
-/*
-Допустим получены токены access и refresh.
-Через минуту refresh токен отправлен на эндпоинт /auth/refresh и получены два новых токена.
-Старый access токен всё ещё действителен пока не истечёт его время !!!
-
-                            Если нужно отзывать access немедленно
-
-Есть три подхода, каждый со своей ценой:
-
-1. Укоротить TTL access до 1–5 минут
-Самое простое. Окно атаки сокращается до 1–5 минут,
-но клиент будет ходить на /auth/refresh каждые пару минут.
-Для API с высокой нагрузкой это лишние запросы, но для большинства случаев — приемлемо.
-
-2. Blacklist access-токенов (Redis)
-При logout/компрометации кладёте jti (уникальный ID токена, claim Jwts.builder().setId(...))
- в Redis с TTL = оставшееся время жизни токена.
- JwtAuthenticationFilter дополнительно проверяет jti в blacklist.
- Минус — теперь каждый запрос идёт в Redis, что частично убивает stateless.
-
-3. Хранить версию токена в БД / Redis
-У пользователя есть поле tokenVersion.
-В access-токен кладётся claim ver=N.
-При logout/смене пароля/компрометации tokenVersion++.
-Фильтр сверяет ver из токена с версией в БД.
-Минус — снова запрос к БД на каждый вызов (или кэш).
-
-Все три подхода — это отказ от чистого stateless в пользу безопасности.
-Выбор зависит от того, что важнее: производительность или мгновенный отзыв.
- */
-
-
-/*
 В приложении - обычный Double-Submit, он уязвим к подмене cookie через subdomain или MITM
 (если злоумышленник может установить свою cookie XSRF-TOKEN на домене приложения).
 В этом случае он ставит своё значение в cookie, своё — в заголовок,
@@ -89,26 +24,41 @@ Signed Double-Submit решает эту проблему:
  */
 
 /*
+  Сессия — серверное состояние.
+ Горизонтальное масштабирование требует sticky sessions или Spring Session + Redis
+ (иначе пользователь «вылетит» при балансировке между инстансами).
+ Это плата за session-based.
+ */
+
+/*
                         Что нужно сделать фронтенду:
 
-*   При логине: fetch(..., { credentials: 'include' }) — чтобы браузер сохранил cookie.
-*   Для всех запросов, изменяющих состояние (POST, PUT, DELETE), кроме логина:
-  прочитать XSRF-TOKEN из cookie (он не HttpOnly, поэтому доступен)
-  и положить его в заголовок X-XSRF-TOKEN.
-*   Для /auth/refresh и /auth/logout — credentials: 'include' + заголовок X-XSRF-TOKEN.
 
-Проверка CSRF:
+     Действие	        Было (JWT)	                             Стало (SESSION)
+-----------------------------------------------------------------------------------------------------------------
 
-*   Если клиент не пришлёт X-XSRF-TOKEN или он не совпадёт с cookie —
-  Spring вернёт 403 Forbidden ещё до того, как запрос дойдёт до контроллера.
-*   Остальные эндпоинты (/admin, /technician и т.д.) защищены Bearer-токеном и не требуют CSRF-токена,
-  потому что браузер не добавляет заголовок Authorization автоматически.
+* Логин	             POST /auth ->  	                POST /auth с credentials: 'include' ->
+                     сохранить accessToken в памяти,    cookie JSESSIONID автоматически сохраняется браузером.
+                     refreshToken в cookie              Перечитать X-XSRF-TOKEN после ответа (он ротирован)
 
-Безопасность:
+* Обычные запросы	 Authorization:                     credentials: 'include' (cookie автоматически)
+                     Bearer <access>
 
-* HttpOnly + Secure + SameSite=Strict для refresh-cookie → защита от XSS и смягчение CSRF.
-* CSRF-токен (double-submit) для /refresh и /logout → полная защита от CSRF для эндпоинтов, использующих cookie.
-* Access-токен в теле ответа и заголовке Authorization → основные API не подвержены CSRF.
+* Обновление 	     POST /refresh с X-XSRF-TOKEN	    Нет — сессия продлевается сама (sliding expiration),
+  токена                                                Spring обновляет JSESSIONID
+
+* CSRF	             X-XSRF-TOKEN     	                X-XSRF-TOKEN для всех POST/PUT/DELETE/PATCH (кроме /auth)
+                     для /refresh и /logout
+
+* Логаут	         POST /logout с X-XSRF-TOKEN	    POST /api/v1/auth/logout
+                                                        с X-XSRF-TOKEN + credentials: 'include'
+
+* 401 	             Повторить /refresh	                Перелогиниться (/auth заново)
+( сессия
+  истекла )
+-----------------------------------------------------------------------------------------------------------------
+* Ключевое для SPA: на всех fetch — credentials: 'include', иначе JSESSIONID не отправится.
+-----------------------------------------------------------------------------------------------------------------
  */
 
 @SpringBootApplication

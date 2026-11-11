@@ -5,7 +5,6 @@ import ru.kraser.session_security.model.Role;
 
 @Builder
 public record AuthenticationResponse(
-        String accessToken,
         String username,
         Role role
 ) {

@@ -7,7 +7,6 @@ public class Utilities {
 
     public static final String BASE_URL = "/api/v1";
     public static final String AUTH_URL = "/auth";
-    public static final String REFRESH_URL = "/refresh";
     public static final String LOGOUT_URL = "/logout";
     public static final String OPEN_URL = "/open";
     public static final String DEFAULT_URL = "/default";
@@ -16,12 +15,7 @@ public class Utilities {
     public static final String TECHNICIAN_URL = "/technician";
     public static final String EMPLOYEE_URL = "/employee";
 
-    public static final String AUTH_HEADER = "Authorization";
-
-    public static final String CLAIM_TYPE = "type";
-
-    // Cookie names
-    public static final String REFRESH_TOKEN_COOKIE = "refreshToken";
+    // CSRF
     public static final String CSRF_COOKIE = "XSRF-TOKEN";
     public static final String CSRF_HEADER = "X-XSRF-TOKEN";
 }

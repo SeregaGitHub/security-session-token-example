@@ -8,10 +8,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.authentication.session.NullAuthenticatedSessionStrategy;
+import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
@@ -28,9 +29,10 @@ import static ru.kraser.session_security.util.Utilities.*;
 @RequiredArgsConstructor
 public class SecurityWebConfiguration {
 
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
     // Нужно если в SecurityAppConfiguration есть бин AuthenticationProvider
     //private final AuthenticationProvider authenticationProvider;
+
+    private final SecurityContextRepository securityContextRepository;
 
     @Value("${allowed.frontend.url}")
     private String allowedFrontendUrl;
@@ -53,64 +55,49 @@ public class SecurityWebConfiguration {
                     нужно, чтобы жертва залогинилась под аккаунтом атакующего,
                     что требует от жертвы ввода пароля атакующего — маловероятно
                  */
+
+                // CSRF — для ВСЕХ небезопасных методов, кроме /auth (логин)
+                // login CSRF отключён: требует bootstrap GET перед логином, для демо — избыточно.
+                // Почему ignoringRequestMatchers(/auth): логин не защищён CSRF,
+                // потому что до логина у клиента может не быть CSRF-токена (нет сессии).
+                // В prod можно убрать это исключение и добавить GET /api/v1/csrf (bootstrap-эндпоинт)
+                // — SPA сначала получает токен, потом логинится.
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfRepository())
                     // для prod можно рассмотреть XorCsrfTokenRequestAttributeHandler() - защита от BREACH-атак
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                        .sessionAuthenticationStrategy(new NullAuthenticatedSessionStrategy())
-                        .requireCsrfProtectionMatcher(request -> {
-                            // CSRF проверяется ТОЛЬКО для refresh и logout
-                            String path = request.getServletPath();
-                            String method = request.getMethod();
-                            boolean isProtectedPath = path.equals(BASE_URL + AUTH_URL + REFRESH_URL)
-                                    || path.equals(BASE_URL + AUTH_URL + LOGOUT_URL);
-                            boolean isUnsafeMethod = !HttpMethod.GET.matches(method)
-                                    && !HttpMethod.HEAD.matches(method)
-                                    && !HttpMethod.OPTIONS.matches(method)
-                                    && !HttpMethod.TRACE.matches(method);
-                            return isProtectedPath && isUnsafeMethod;
-                        })
+                        .ignoringRequestMatchers(BASE_URL + AUTH_URL)
                 )
-                // другой вариант
-                // прописываем все url которым не нужен CSRF токен
-
-                /*.csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                        .ignoringRequestMatchers(
-                                BASE_URL + AUTH_URL,
-                                BASE_URL + OPEN_URL,
-                                BASE_URL + ADMIN_URL + "/**",
-                                BASE_URL + TECHNICIAN_URL + "/**",
-                                BASE_URL + EMPLOYEE_URL + "/**",
-                                BASE_URL + DEFAULT_URL + "/**"
-                        )
-                )*/
                 .authorizeHttpRequests((request) -> request
                         .requestMatchers(BASE_URL + AUTH_URL)
-                        .permitAll()
-                        .requestMatchers(BASE_URL + AUTH_URL + REFRESH_URL)
                         .permitAll()
                         .requestMatchers(BASE_URL + AUTH_URL + LOGOUT_URL)
                         .permitAll()
                         .requestMatchers(BASE_URL + OPEN_URL)
                         .permitAll()
-                        .requestMatchers(BASE_URL + ADMIN_URL + "/**").hasRole(
-                                Role.ADMIN.name())
-                        .requestMatchers(BASE_URL + TECHNICIAN_URL + "/**").hasAnyRole(
-                                Role.ADMIN.name(), Role.TECHNICIAN.name())
-                        .requestMatchers(BASE_URL + EMPLOYEE_URL + "/**").hasAnyRole(
-                                Role.ADMIN.name(), Role.TECHNICIAN.name(), Role.EMPLOYEE.name())
+                        .requestMatchers(BASE_URL + ADMIN_URL + "/**")
+                        .hasRole(Role.ADMIN.name())
+                        .requestMatchers(BASE_URL + TECHNICIAN_URL + "/**")
+                        .hasAnyRole(Role.ADMIN.name(), Role.TECHNICIAN.name())
+                        .requestMatchers(BASE_URL + EMPLOYEE_URL + "/**")
+                        .hasAnyRole(Role.ADMIN.name(), Role.TECHNICIAN.name(), Role.EMPLOYEE.name())
                         .anyRequest().authenticated())
+                // Сессия: IF_REQUIRED + защита от session fixation (смена ID при логине)
                 .sessionManagement(
                         manager -> manager
-                            .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                            .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+                            .sessionFixation(fixation -> fixation.changeSessionId())
                 )
                 // Нужно если в SecurityAppConfiguration есть бин AuthenticationProvider
                 //.authenticationProvider(authenticationProvider)
-                .addFilterAfter(
-                        jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class
-                )
+
+
+                // Явно подключаем SecurityContextRepository, чтобы фильтр и AuthenticationService
+                // использовали ОДИН и тот же репозиторий (HttpSession)
+                .securityContext(sc -> sc.securityContextRepository(securityContextRepository))
+
+                // Стандартный LogoutFilter отключаем — logout реализован в AuthController
+                .logout(AbstractHttpConfigurer::disable)
                 .addFilterAfter(
                         new CookieCsrfFilter(), UsernamePasswordAuthenticationFilter.class
                 );
@@ -118,23 +105,21 @@ public class SecurityWebConfiguration {
     }
 
     private CorsConfigurationSource corsConfigurationSource() {
-        return new CorsConfigurationSource() {
-            @Override
-            public CorsConfiguration getCorsConfiguration(HttpServletRequest request) {
-                CorsConfiguration cfg = new CorsConfiguration();
-                cfg.setAllowedOrigins(List.of(allowedFrontendUrl));
-                cfg.setAllowedMethods(Collections.singletonList("*"));
-                cfg.setAllowedHeaders(Collections.singletonList("*"));
-                cfg.setExposedHeaders(List.of(CSRF_COOKIE));   // чтобы клиент мог прочитать XSRF-TOKEN
-                cfg.setAllowCredentials(true);                 // обязательно для cookie
-                cfg.setMaxAge(3600L);
-                return cfg;
-            }
+        return request -> {
+            CorsConfiguration cfg = new CorsConfiguration();
+            cfg.setAllowedOrigins(List.of(allowedFrontendUrl));
+            cfg.setAllowedMethods(Collections.singletonList("*"));
+            cfg.setAllowedHeaders(Collections.singletonList("*"));
+            cfg.setExposedHeaders(List.of(CSRF_HEADER));   // SPA читает X-XSRF-TOKEN из ответа
+            cfg.setAllowCredentials(true);                 // обязательно для session cookie
+            cfg.setMaxAge(3600L);
+            return cfg;
         };
     }
 
     private CookieCsrfTokenRepository csrfRepository() {
-        CookieCsrfTokenRepository csrfTokenRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        CookieCsrfTokenRepository csrfTokenRepository =
+                CookieCsrfTokenRepository.withHttpOnlyFalse(); // JS читает CsrfToken
         csrfTokenRepository.setCookieName(CSRF_COOKIE);
         csrfTokenRepository.setHeaderName(CSRF_HEADER);
 
