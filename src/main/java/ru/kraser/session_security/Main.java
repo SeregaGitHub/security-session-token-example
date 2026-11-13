@@ -12,18 +12,6 @@ import ru.kraser.session_security.service.UserService;
 import java.util.List;
 
 /*
-В приложении - обычный Double-Submit, он уязвим к подмене cookie через subdomain или MITM
-(если злоумышленник может установить свою cookie XSRF-TOKEN на домене приложения).
-В этом случае он ставит своё значение в cookie, своё — в заголовок,
-и проверка cookie == header проходит.
-
-Signed Double-Submit решает эту проблему:
-сервер подписывает токен (HMAC) перед установкой в cookie.
-При проверке он валидирует подпись, а не просто сравнивает значения.
-Злоумышленник не может подписать свой токен — у него нет секретного ключа.
- */
-
-/*
   Сессия — серверное состояние.
  Горизонтальное масштабирование требует sticky sessions или Spring Session + Redis
  (иначе пользователь «вылетит» при балансировке между инстансами).
@@ -31,33 +19,81 @@ Signed Double-Submit решает эту проблему:
  */
 
 /*
+
+                        Сессия по своей природе не предполагает reuse detection
+
+Что можно сделать (аналоги reuse detection для SESSION)
+Если хотите приблизиться к reuse detection в SESSION-версии:
+
+1. Spring Session + SessionRegistry — ограничить количество сессий
+
+http.sessionManagement(s -> s
+    .maximumSessions(1)                    // только 1 активная сессия
+    .maxSessionsPreventsLogin(true)        // при попытке второй — блокировать логин
+    .expiredUrl("/login?expired")
+);
+
+Эффект: пользователь может быть залогинен только в одном месте.
+        Если злоумышленник украл JSESSIONID и залогинился — старая сессия (жертвы) инвалидируется.
+        Это похоже на reuse detection, но не детектит кражу — просто ограничивает количество.
+
+Минус:  не работает в stateless (нужен SessionRegistry в памяти или Redis).
+
+2. Привязка сессии к IP/User-Agent (session pinning)
+
+// При создании сессии сохранить IP/UA, проверять на каждом запросе
+session.setAttribute("ip", request.getRemoteAddr());
+session.setAttribute("ua", request.getHeader("User-Agent"));
+
+// В фильтре
+if (!session.getAttribute("ip").equals(request.getRemoteAddr())) {
+    session.invalidate();   // «сессия угнана» — инвалидировать
+}
+
+Эффект: если JSESSIONID украден и используется с другого IP/устройства — сессия инвалидируется.
+        Это ближе к reuse detection (детектит «подозрительное» использование).
+
+Минусы:
+
+- ломается при смене IP (мобильный интернет, VPN);
+- User-Agent можно подделать;
+- не работает при легитимном использовании с нескольких устройств.
+- Для production — спорная практика.
+
+3. Логирование и мониторинг
+
+// При каждом запросе логировать IP/UA + JSESSIONID
+log.info("Request from IP={}, UA={}, session={}",
+    request.getRemoteAddr(),
+    request.getHeader("User-Agent"),
+    request.getSession(false)?.getId());
+
+Эффект: постфактум можно обнаружить аномалии (например, JSESSIONID используется с двух разных IP).
+        Но автоматической реакции нет.
+ */
+
+/*
                         Что нужно сделать фронтенду:
 
 
-     Действие	        Было (JWT)	                             Стало (SESSION)
+Что должен делать фронтенд
+ Полный чек-лист SPA
+#	Действие	                            Детали
 -----------------------------------------------------------------------------------------------------------------
-
-* Логин	             POST /auth ->  	                POST /auth с credentials: 'include' ->
-                     сохранить accessToken в памяти,    cookie JSESSIONID автоматически сохраняется браузером.
-                     refreshToken в cookie              Перечитать X-XSRF-TOKEN после ответа (он ротирован)
-
-* Обычные запросы	 Authorization:                     credentials: 'include' (cookie автоматически)
-                     Bearer <access>
-
-* Обновление 	     POST /refresh с X-XSRF-TOKEN	    Нет — сессия продлевается сама (sliding expiration),
-  токена                                                Spring обновляет JSESSIONID
-
-* CSRF	             X-XSRF-TOKEN     	                X-XSRF-TOKEN для всех POST/PUT/DELETE/PATCH (кроме /auth)
-                     для /refresh и /logout
-
-* Логаут	         POST /logout с X-XSRF-TOKEN	    POST /api/v1/auth/logout
-                                                        с X-XSRF-TOKEN + credentials: 'include'
-
-* 401 	             Повторить /refresh	                Перелогиниться (/auth заново)
-( сессия
-  истекла )
+1	Логин	                                POST /api/v1/auth с credentials: 'include'
+2	После логина — получить CSRF-токен	    GET /api/v1/csrf с credentials: 'include' -> сохранить csrf_token в памяти
+3	Каждый небезопасный запрос	            X-XSRF-TOKEN: <csrf_token> + credentials: 'include'
+4	На 403 (токен невалиден)	            GET /api/v1/csrf -> обновить токен -> повторить запрос
+5	На 401 (сессия истекла)	                Перелогиниться через /auth
+6	Логаут	                                POST /api/v1/auth/logout с X-XSRF-TOKEN + credentials: 'include'
+7	Не пытаться декодировать токен	        Отправлять csrf_token как есть — это XOR-маска, сервер сам её «снимет»
 -----------------------------------------------------------------------------------------------------------------
 * Ключевое для SPA: на всех fetch — credentials: 'include', иначе JSESSIONID не отправится.
+* credentials: 'include' на всех запросах к бэкенду
+* Хранить токен в памяти (JS-переменная)	localStorage уязвим к XSS
+* Отправлять X-XSRF-TOKEN для всех POST/PUT/DELETE/PATCH
+  Исключение: /auth (логин)
+* НЕ отправлять CSRF для GET/HEAD/OPTIONS
 -----------------------------------------------------------------------------------------------------------------
  */
 

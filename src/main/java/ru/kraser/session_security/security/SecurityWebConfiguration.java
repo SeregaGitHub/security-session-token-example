@@ -70,11 +70,9 @@ public class SecurityWebConfiguration {
                 // — SPA сначала получает токен, потом логинится.
                 .csrf(csrf -> csrf
                      // .csrfTokenRepository(csrfRepository()) if Synchronizer Token Pattern remove (only Double-Submit)
-                    // для prod можно рассмотреть XorCsrfTokenRequestAttributeHandler() - защита от BREACH-атак
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler() /*{{
-                            setCsrfRequestAttributeName(null);
-                        }}*/) // простой вариант
-                        //.csrfTokenRequestHandler(new XorCsrfTokenRequestAttributeHandler())
+                    // для prod можно рассмотреть XorCsrfTokenRequestAttributeHandler() // - защита от BREACH-атак
+                        //.csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()) // простой вариант
+                        .csrfTokenRequestHandler(new XorCsrfTokenRequestAttributeHandler())
                         .ignoringRequestMatchers(BASE_URL + AUTH_URL)
                 )
                 .authorizeHttpRequests((request) -> request
