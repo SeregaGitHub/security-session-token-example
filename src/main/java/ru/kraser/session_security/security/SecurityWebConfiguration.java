@@ -15,6 +15,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import ru.kraser.session_security.model.Role;
@@ -37,12 +38,17 @@ public class SecurityWebConfiguration {
     @Value("${allowed.frontend.url}")
     private String allowedFrontendUrl;
 
+
+
+    //if Synchronizer Token Pattern remove (only Double-Submit)
+
     //  only if no nginx (and if cross-origin: frontend and backend on differed ports)  //
-    @Value("${app.cookie.csrf-same-site:Strict}")
+
+/*    @Value("${app.cookie.csrf-same-site:Strict}")
     private String csrfCookieSameSite;
 
     @Value("${app.cookie.csrf-secure:false}")
-    private boolean csrfCookieSecure;
+    private boolean csrfCookieSecure;*/
     //  only if no nginx (and if cross-origin: frontend and backend on differed ports)  //
 
     @Bean
@@ -63,15 +69,20 @@ public class SecurityWebConfiguration {
                 // В prod можно убрать это исключение и добавить GET /api/v1/csrf (bootstrap-эндпоинт)
                 // — SPA сначала получает токен, потом логинится.
                 .csrf(csrf -> csrf
-                        .csrfTokenRepository(csrfRepository())
+                     // .csrfTokenRepository(csrfRepository()) if Synchronizer Token Pattern remove (only Double-Submit)
                     // для prod можно рассмотреть XorCsrfTokenRequestAttributeHandler() - защита от BREACH-атак
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler() /*{{
+                            setCsrfRequestAttributeName(null);
+                        }}*/) // простой вариант
+                        //.csrfTokenRequestHandler(new XorCsrfTokenRequestAttributeHandler())
                         .ignoringRequestMatchers(BASE_URL + AUTH_URL)
                 )
                 .authorizeHttpRequests((request) -> request
                         .requestMatchers(BASE_URL + AUTH_URL)
                         .permitAll()
                         .requestMatchers(BASE_URL + AUTH_URL + LOGOUT_URL)
+                        .permitAll()
+                        .requestMatchers(BASE_URL + CSRF_URL)
                         .permitAll()
                         .requestMatchers(BASE_URL + OPEN_URL)
                         .permitAll()
@@ -97,10 +108,8 @@ public class SecurityWebConfiguration {
                 .securityContext(sc -> sc.securityContextRepository(securityContextRepository))
 
                 // Стандартный LogoutFilter отключаем — logout реализован в AuthController
-                .logout(AbstractHttpConfigurer::disable)
-                .addFilterAfter(
-                        new CookieCsrfFilter(), UsernamePasswordAuthenticationFilter.class
-                );
+                .logout(AbstractHttpConfigurer::disable);
+
         return http.build();
     }
 
@@ -117,6 +126,10 @@ public class SecurityWebConfiguration {
         };
     }
 
+    /*
+
+    if Synchronizer Token Pattern remove (only Double-Submit)
+
     private CookieCsrfTokenRepository csrfRepository() {
         CookieCsrfTokenRepository csrfTokenRepository =
                 CookieCsrfTokenRepository.withHttpOnlyFalse(); // JS читает CsrfToken
@@ -130,5 +143,5 @@ public class SecurityWebConfiguration {
         // only if no nginx (and if cross-origin: frontend and backend on differed ports) //
 
         return csrfTokenRepository;
-    }
+    }*/
 }
