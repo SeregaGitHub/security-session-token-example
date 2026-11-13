@@ -11,6 +11,7 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
 import org.springframework.stereotype.Service;
 import ru.kraser.session_security.exception.AuthException;
 import ru.kraser.session_security.model.User;
@@ -35,6 +36,7 @@ public class AuthenticationService {
 
     private final AuthenticationManager authenticationManager;
     private final SecurityContextRepository securityContextRepository;
+    private final SessionAuthenticationStrategy sessionAuthenticationStrategy;
 
     public AuthenticationResponse authenticate(AuthenticationRequest request,
                                                HttpServletRequest httpRequest,
@@ -50,6 +52,9 @@ public class AuthenticationService {
         } catch (AuthenticationException e) {
             throw new AuthException("Неверное имя пользователя или пароль !!!");
         }
+
+        // Меняем ID сессии (защита от session fixation)
+        sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
 
         // Сохраняем контекст в HttpSession
         SecurityContext context = SecurityContextHolder.createEmptyContext();
