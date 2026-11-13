@@ -4,6 +4,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -33,9 +35,20 @@ public class AuthController {
     }
 
     @PostMapping(AUTH_URL + LOGOUT_URL)
-    public ResponseEntity<Void> logout(HttpServletRequest httpRequest) {
+    public ResponseEntity<Void> logout(HttpServletRequest httpRequest, HttpServletResponse response) {
         log.info("Attempting to logout...");
         authenticationService.logout(httpRequest);
+
+        // Удаляем JSESSIONID cookie на клиенте (если нужно)
+        ResponseCookie deleteSessionCookie = ResponseCookie.from("JSESSIONID", "")
+                .httpOnly(true)
+                .secure(false) // в prod: true
+                .path("/")
+                .sameSite("Strict")
+                .maxAge(0)
+                .build();
+        response.addHeader(HttpHeaders.SET_COOKIE, deleteSessionCookie.toString());
+
         log.info("Logout successful");
         return ResponseEntity.noContent().build();
     }
