@@ -1,20 +1,15 @@
 package ru.kraser.session_security.security;
 
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.context.SecurityContextRepository;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
-import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -38,19 +33,6 @@ public class SecurityWebConfiguration {
     @Value("${allowed.frontend.url}")
     private String allowedFrontendUrl;
 
-
-
-    //if Synchronizer Token Pattern remove (only Double-Submit)
-
-    //  only if no nginx (and if cross-origin: frontend and backend on differed ports)  //
-
-/*    @Value("${app.cookie.csrf-same-site:Strict}")
-    private String csrfCookieSameSite;
-
-    @Value("${app.cookie.csrf-secure:false}")
-    private boolean csrfCookieSecure;*/
-    //  only if no nginx (and if cross-origin: frontend and backend on differed ports)  //
-
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -69,8 +51,6 @@ public class SecurityWebConfiguration {
                 // В prod можно убрать это исключение и добавить GET /api/v1/csrf (bootstrap-эндпоинт)
                 // — SPA сначала получает токен, потом логинится.
                 .csrf(csrf -> csrf
-                     // .csrfTokenRepository(csrfRepository()) if Synchronizer Token Pattern remove (only Double-Submit)
-                    // для prod можно рассмотреть XorCsrfTokenRequestAttributeHandler() // - защита от BREACH-атак
                         //.csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()) // простой вариант
                         .csrfTokenRequestHandler(new XorCsrfTokenRequestAttributeHandler())
                         .ignoringRequestMatchers(BASE_URL + AUTH_URL)
@@ -100,11 +80,11 @@ public class SecurityWebConfiguration {
                 // Нужно если в SecurityAppConfiguration есть бин AuthenticationProvider
                 //.authenticationProvider(authenticationProvider)
 
-
                 // Явно подключаем SecurityContextRepository, чтобы фильтр и AuthenticationService
                 // использовали ОДИН и тот же репозиторий (HttpSession)
-                .securityContext(sc -> sc.securityContextRepository(securityContextRepository))
-
+                .securityContext(
+                        sc -> sc.securityContextRepository(securityContextRepository)
+                )
                 // Стандартный LogoutFilter отключаем — logout реализован в AuthController
                 .logout(AbstractHttpConfigurer::disable);
 
@@ -123,23 +103,4 @@ public class SecurityWebConfiguration {
             return cfg;
         };
     }
-
-    /*
-
-    if Synchronizer Token Pattern remove (only Double-Submit)
-
-    private CookieCsrfTokenRepository csrfRepository() {
-        CookieCsrfTokenRepository csrfTokenRepository =
-                CookieCsrfTokenRepository.withHttpOnlyFalse(); // JS читает CsrfToken
-        csrfTokenRepository.setCookieName(CSRF_COOKIE);
-        csrfTokenRepository.setHeaderName(CSRF_HEADER);
-
-        // only if no nginx (and if cross-origin: frontend and backend on differed ports) //
-        csrfTokenRepository.setCookieCustomizer(cookie -> cookie
-                .sameSite(csrfCookieSameSite)
-                .secure(csrfCookieSecure));
-        // only if no nginx (and if cross-origin: frontend and backend on differed ports) //
-
-        return csrfTokenRepository;
-    }*/
 }

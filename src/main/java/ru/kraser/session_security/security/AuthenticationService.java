@@ -31,7 +31,7 @@ public class AuthenticationService {
 -    session.invalidate() — контейнер сам выставит Set-Cookie: JSESSIONID=; Max-Age=0.
 
 -    CsrfAuthenticationStrategy (Spring) сработает автоматически через AuthenticationSuccessEvent
-   после authenticationManager.authenticate(...) → ротирует CSRF-токен (защита от session fixation).
+   после authenticationManager.authenticate(...) -> ротирует CSRF-токен (защита от session fixation).
 */
 
     private final AuthenticationManager authenticationManager;
