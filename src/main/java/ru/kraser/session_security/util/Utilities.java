@@ -17,5 +17,5 @@ public class Utilities {
     public static final String EMPLOYEE_URL = "/employee";
 
     // CSRF
-    public static final String CSRF_HEADER = "X-XSRF-TOKEN";
+    public static final String CSRF_HEADER = "X-CSRF-TOKEN";
 }

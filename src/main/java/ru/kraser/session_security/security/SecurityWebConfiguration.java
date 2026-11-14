@@ -10,6 +10,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -51,8 +52,9 @@ public class SecurityWebConfiguration {
                 // В prod можно убрать это исключение и добавить GET /api/v1/csrf (bootstrap-эндпоинт)
                 // — SPA сначала получает токен, потом логинится.
                 .csrf(csrf -> csrf
-                        //.csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()) // простой вариант
-                        .csrfTokenRequestHandler(new XorCsrfTokenRequestAttributeHandler())
+                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                        // if Thymeleaf, JSP (CSRF-token in <input type="hidden">)
+                        //.csrfTokenRequestHandler(new XorCsrfTokenRequestAttributeHandler())
                         .ignoringRequestMatchers(BASE_URL + AUTH_URL)
                 )
                 .authorizeHttpRequests((request) -> request
